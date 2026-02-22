@@ -1,16 +1,6 @@
-from fastapi import FastAPI, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
+from http.server import BaseHTTPRequestHandler
+import json
 import numpy as np
-
-app = FastAPI()
-
-# Standard CORS Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["POST", "OPTIONS"],
-    allow_headers=["*"],
-)
 
 DATA = [
     {"region": "apac", "lat": 130.36, "up": 98.128}, {"region": "apac", "lat": 182.96, "up": 99.336},
@@ -33,36 +23,38 @@ DATA = [
     {"region": "amer", "lat": 191.79, "up": 99.406}, {"region": "amer", "lat": 187.01, "up": 98.074}
 ]
 
-@app.options("/api/latency")
-async def options_handler():
-    return Response(status_code=200, headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*"
-    })
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
-@app.post("/api/latency")
-async def calculate_metrics(request: Request):
-    body = await request.json()
-    req_regions = body.get("regions", [])
-    threshold = body.get("threshold_ms", 180)
-    
-    response_data = {}
-    for r in req_regions:
-        reg_data = [x for x in DATA if x["region"] == r]
-        if not reg_data: continue
-        lats = [x["lat"] for x in reg_data]
-        uptimes = [x["up"] for x in reg_data]
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        body = json.loads(post_data)
         
-        response_data[r] = {
-            "avg_latency": round(float(np.mean(lats)), 2),
-            "p95_latency": round(float(np.percentile(lats, 95)), 2),
-            "avg_uptime": round(float(np.mean(uptimes)), 3),
-            "breaches": sum(1 for l in lats if l > threshold)
-        }
-    
-    return Response(
-        content=str(response_data).replace("'", '"'), 
-        media_type="application/json",
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
+        req_regions = body.get("regions", [])
+        threshold = body.get("threshold_ms", 180)
+        
+        response_data = {}
+        for r in req_regions:
+            reg_data = [x for x in DATA if x["region"] == r]
+            if not reg_data: continue
+            lats = [x["lat"] for x in reg_data]
+            uptimes = [x["up"] for x in reg_data]
+            
+            response_data[r] = {
+                "avg_latency": round(float(np.mean(lats)), 2),
+                "p95_latency": round(float(np.percentile(lats, 95)), 2),
+                "avg_uptime": round(float(np.mean(uptimes)), 3),
+                "breaches": sum(1 for l in lats if l > threshold)
+            }
+
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(response_data).encode('utf-8'))
